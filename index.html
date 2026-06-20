@@ -176,6 +176,27 @@
   .cl-tag.dec{background:#fde2e2;color:#b3261e}
   .cl-tag.api{background:#d6f0e2;color:#0f6b3e}
   .cl-note{font-size:12.5px;color:var(--muted);margin:-4px 0 16px}
+
+  /* ============ inline UI editing ============ */
+  body.inline [contenteditable]{outline:1.5px dashed rgba(47,180,110,.55);outline-offset:3px;border-radius:4px;
+    transition:outline-color .15s;min-width:18px;cursor:text}
+  body.inline [contenteditable]:hover{outline-color:var(--brand2)}
+  body.inline [contenteditable]:focus{outline:2px solid var(--brand2);background:rgba(47,180,110,.07)}
+  body.inline [contenteditable]:empty:before{content:attr(data-ph);color:var(--muted);opacity:.6}
+  .inline-hint{font-size:12px;font-weight:600;color:var(--brand2)}
+  /* editable screenshots */
+  .shot{position:relative;flex:0 0 auto}
+  .shot-ctl{position:absolute;top:8px;right:8px;display:none;gap:6px}
+  body.inline .gallery .shot-ctl{display:flex}
+  .shot-ctl button{width:30px;height:30px;border:0;border-radius:50%;background:rgba(0,0,0,.62);color:#fff;
+    font-size:14px;font-weight:700;cursor:pointer;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .shot-ctl button:hover{background:#000}
+  .shot-add{flex:0 0 auto;align-self:center;width:120px;height:200px;border:2px dashed var(--line);
+    border-radius:18px;background:#fafafa;color:var(--muted);font-size:34px;font-weight:300;cursor:pointer;
+    display:none;align-items:center;justify-content:center}
+  body.inline .gallery .shot-add{display:flex}
+  body.inline .as-id .ic,body.inline .gp-side .ic,body.inline .gfx .card .body img{cursor:pointer}
+  body.inline .as-id .ic:hover,body.inline .gp-side .ic:hover{outline:3px solid #fff;outline-offset:2px}
 </style>
 </head>
 <body>
@@ -188,14 +209,17 @@
   </div>
   <div class="seg" id="localeSeg"></div>
   <button class="toggle" id="asoToggle">ASO checks</button>
+  <button class="toggle" id="inlineBtn">Edit on page</button>
   <button class="toggle" id="checklistBtn">Release checklist</button>
   <button class="toggle" id="editToggle">Edit JSON</button>
+  <button class="toggle" id="exportBtn">Export data</button>
   <button class="toggle" id="loadBtn">Load JSON…</button>
   <button class="toggle" id="loadImgBtn">Load images…</button>
   <span class="dz-hint">⤵ or drag images / a folder anywhere</span>
   <input type="file" id="fileInput" accept="application/json,.json" class="hidden">
   <input type="file" id="imgInput" accept="image/*" multiple webkitdirectory class="hidden">
   <input type="file" id="imgInputFlat" accept="image/*" multiple class="hidden">
+  <input type="file" id="imgPick" accept="image/*" multiple class="hidden">
 </div>
 <div class="stage" id="app"><div class="err">Loading demo listing…</div></div>
 <div class="editor hidden" id="editor">
@@ -219,46 +243,62 @@ const LIM = {
   appstore:{name:30,subtitle:30,keywords:100,promotionalText:170,description:4000,whatsNew:4000},
   googleplay:{title:30,shortDescription:80,fullDescription:4000,changelog:500}
 };
-let DATA=null, SAVED=null, store='appstore', locale='en-US', shotTab='phone', showAso=false, mode='preview';
+let DATA=null, SAVED=null, store='appstore', locale='en-US', shotTab='phone', showAso=false, mode='preview', inlineEdit=false;
 
 const esc=s=>(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const cnt=(s,max)=>{const n=[...(s||'')].length;return `<span class="count ${n<=max?'ok':'bad'}">${n}/${max}</span>`;};
 const ICON='../store-assets/app-icon-1024.png';
 
-function gallery(list,cls=''){
-  return `<div class="gallery ${cls}">${list.map(s=>`<img loading="lazy" src="${s.file}" alt="${esc(s.label)}">`).join('')}</div>`;
+// editable-attribute helper: in inline mode, makes an element contenteditable + tags it with a DATA path
+const ea=(path,ph='')=>inlineEdit?` contenteditable="true" data-edit="${path}" data-ph="${esc(ph)}" spellcheck="false"`:'';
+function getPath(o,p){return p.split('.').reduce((a,k)=>a==null?a:a[k],o);}
+function setPath(o,p,v){const k=p.split('.');let n=o;for(let i=0;i<k.length-1;i++){if(n[k[i]]==null)n[k[i]]={};n=n[k[i]];}n[k[k.length-1]]=v;}
+
+function gallery(list,cls='',cat=''){
+  const imgs=(list||[]).map((s,i)=>{
+    const img=`<img loading="lazy" src="${s.file}" alt="${esc(s.label)}">`;
+    if(!inlineEdit||!cat) return img;
+    return `<div class="shot">${img}<div class="shot-ctl">
+      <button data-act="rep" data-cat="${cat}" data-i="${i}" title="Replace image">⤴</button>
+      <button data-act="del" data-cat="${cat}" data-i="${i}" title="Remove image">✕</button></div></div>`;
+  }).join('');
+  const add=(inlineEdit&&cat)?`<button class="shot-add" data-act="add" data-cat="${cat}" title="Add image(s)">＋</button>`:'';
+  return `<div class="gallery ${cls}">${imgs}${add}</div>`;
 }
 
 /* ---------------- App Store ---------------- */
 function viewAppStore(a,L){
   const langs=a.locales.length, primary=a.locales[0].split('-')[0].toUpperCase();
   const icon=a.icon||ICON, dev=esc(a.developer||'FightTech'), rating=esc(a.rating||'4.8'), age=esc(a.age||'4+');
+  const kw=L.appstore.keywords||'';
   return `<div class="as">
     <div class="as-banner">
       <div class="as-id">
-        <img class="ic" src="${icon}" alt="">
+        <img class="ic" src="${icon}" alt=""${inlineEdit?' data-act="icon"':''}>
         <div>
-          <h1>${esc(L.appstore.name)}</h1>
-          <div class="tag">${esc(L.appstore.subtitle)}</div>
+          <h1${ea(`locales.${locale}.appstore.name`,'App name')}>${esc(L.appstore.name)}</h1>
+          <div class="tag"${ea(`locales.${locale}.appstore.subtitle`,'Subtitle')}>${esc(L.appstore.subtitle)}</div>
           <div class="meta-line">Free · Designed for iPhone &amp; iPad</div>
           <div class="as-actions"><button class="get">GET</button><div class="as-share">↗</div></div>
         </div>
       </div>
     </div>
     <div class="as-meta">
-      <div class="col"><div class="k">Rating</div><div class="v">${rating}</div><div class="stars">★★★★★</div></div>
-      <div class="col"><div class="k">Age</div><div class="v">${age}</div><div class="s">Years</div></div>
-      <div class="col"><div class="k">Category</div><div class="v">#1</div><div class="s">${esc(a.appStoreCategory)}</div></div>
-      <div class="col"><div class="k">Developer</div><div class="v">👤</div><div class="s">${dev}</div></div>
+      <div class="col"><div class="k">Rating</div><div class="v"${ea('app.rating','4.8')}>${rating}</div><div class="stars">★★★★★</div></div>
+      <div class="col"><div class="k">Age</div><div class="v"${ea('app.age','4+')}>${age}</div><div class="s">Years</div></div>
+      <div class="col"><div class="k">Category</div><div class="v">#1</div><div class="s"${ea('app.appStoreCategory','Category')}>${esc(a.appStoreCategory)}</div></div>
+      <div class="col"><div class="k">Developer</div><div class="v">👤</div><div class="s"${ea('app.developer','Developer')}>${dev}</div></div>
       <div class="col"><div class="k">Language</div><div class="v">${primary}</div><div class="s">+${langs-1} more</div></div>
-      <div class="col"><div class="k">Version</div><div class="v">${a.versionName}</div><div class="s">iOS</div></div>
+      <div class="col"><div class="k">Version</div><div class="v"${ea('app.versionName','1.0.0')}>${esc(a.versionName)}</div><div class="s">iOS</div></div>
     </div>
-    <div class="sec"><h2>iPhone${gallery(DATA.screenshots.iphone)}</h2></div>
-    <div class="sec"><h2>iPad${gallery(DATA.screenshots.ipad,'tab')}</h2></div>
-    <div class="sec"><h2>Promotional text</h2><div class="desc">${esc(L.appstore.promotionalText)}</div></div>
-    <div class="sec"><h2>Description</h2><div class="desc">${esc(L.fullDescription)}</div></div>
-    <div class="sec"><h2>What’s New <span class="small">Version ${a.versionName}</span></h2><div class="desc">${esc(L.whatsNew)}</div></div>
-    <div class="sec"><h2>Keywords</h2><div class="chips">${L.appstore.keywords.split(',').map(k=>`<span class="chip">${esc(k)}</span>`).join('')}</div></div>
+    <div class="sec"><h2>iPhone${gallery(DATA.screenshots.iphone,'','iphone')}</h2></div>
+    <div class="sec"><h2>iPad${gallery(DATA.screenshots.ipad,'tab','ipad')}</h2></div>
+    <div class="sec"><h2>Promotional text</h2><div class="desc"${ea(`locales.${locale}.appstore.promotionalText`,'Promotional text')}>${esc(L.appstore.promotionalText)}</div></div>
+    <div class="sec"><h2>Description</h2><div class="desc"${ea(`locales.${locale}.fullDescription`,'Description')}>${esc(L.fullDescription)}</div></div>
+    <div class="sec"><h2>What’s New <span class="small">Version ${esc(a.versionName)}</span></h2><div class="desc"${ea(`locales.${locale}.whatsNew`,'What’s new')}>${esc(L.whatsNew)}</div></div>
+    <div class="sec"><h2>Keywords</h2>${inlineEdit
+      ? `<div class="desc" data-edit="locales.${locale}.appstore.keywords" contenteditable="true" data-ph="comma,separated,keywords" spellcheck="false">${esc(kw)}</div>`
+      : `<div class="chips">${kw.split(',').map(k=>`<span class="chip">${esc(k)}</span>`).join('')}</div>`}</div>
   </div>`;
 }
 
@@ -266,10 +306,13 @@ function viewAppStore(a,L){
 function gfxCard(kind,title,g){
   const ok = g && g.status==='uploaded' && g.file;
   const pill = ok ? `<span class="pill ok">Uploaded</span>` : `<span class="pill bad">Needed</span>`;
+  const act=inlineEdit?` data-act="gfx" data-gfx="${kind}" title="Replace ${esc(title)}"`:'';
   const body = (g && g.file)
-    ? `<img src="${g.file}" alt="${esc(title)}">
+    ? `<img src="${g.file}" alt="${esc(title)}"${act}>
        <div class="spec">${esc(g.size||'')}${g.size?' · ':''}${esc(g.spec||'')}</div>`
-    : `<div class="miss">No image set — add <code>file</code> in graphics.${kind}</div>`;
+    : (inlineEdit
+        ? `<button class="shot-add" style="display:flex;width:140px;height:90px"${act}>＋</button>`
+        : `<div class="miss">No image set — add <code>file</code> in graphics.${kind}</div>`);
   return `<div class="card ${kind==='featureGraphic'?'feat':'icon'}">
     <div class="hd"><span class="t">${esc(title)}<span class="req">*</span></span>${pill}</div>
     <div class="body">${body}</div>
@@ -296,11 +339,11 @@ function viewPlay(a,L){
     </div>
     <div class="gp-grid">
       <div class="gp-left">
-        <h1 class="gp-title">${esc(L.googleplay.title)}</h1>
-        <div class="gp-dev">${dev}</div>
+        <h1 class="gp-title"${ea(`locales.${locale}.googleplay.title`,'App title')}>${esc(L.googleplay.title)}</h1>
+        <div class="gp-dev"${ea('app.developer','Developer')}>${dev}</div>
         <div class="gp-stats">
-          <div class="st"><div class="a">${rating} ★</div><div class="b">reviews</div></div>
-          <div class="st"><div class="a">${downloads}</div><div class="b">Downloads</div></div>
+          <div class="st"><div class="a"><span${ea('app.rating','4.8')}>${rating}</span> ★</div><div class="b">reviews</div></div>
+          <div class="st"><div class="a"${ea('app.downloads','100+')}>${downloads}</div><div class="b">Downloads</div></div>
           <div class="st"><div class="a">${ageShort}</div><div class="b">Rated for ${ageShort}</div></div>
         </div>
         <button class="gp-install">Install</button>
@@ -312,16 +355,16 @@ function viewPlay(a,L){
             <button data-tab="phone" class="${shotTab==='phone'?'active':''}">Phone (${DATA.screenshots.phone.length})</button>
             <button data-tab="tablet" class="${shotTab==='tablet'?'active':''}">Tablet (${DATA.screenshots.tablet.length})</button>
           </div>
-          ${gallery(list, shotTab==='tablet'?'tab':'')}
+          ${gallery(list, shotTab==='tablet'?'tab':'', shotTab)}
         </div>
 
         ${graphicsBlock()}
 
-        <div class="gp-sec"><h2>About this app</h2><div class="desc">${esc(L.fullDescription)}</div></div>
-        <div class="gp-sec"><h2>What’s new</h2><div class="desc">${esc(L.whatsNew)}</div></div>
+        <div class="gp-sec"><h2>About this app</h2><div class="desc"${ea(`locales.${locale}.fullDescription`,'Description')}>${esc(L.fullDescription)}</div></div>
+        <div class="gp-sec"><h2>What’s new</h2><div class="desc"${ea(`locales.${locale}.whatsNew`,'What’s new')}>${esc(L.whatsNew)}</div></div>
       </div>
       <div class="gp-side">
-        <img class="ic" src="${icon}" alt="">
+        <img class="ic" src="${icon}" alt=""${inlineEdit?' data-act="icon"':''}>
         <div class="gp-card">
           <div class="row"><div class="badge">${ageShort}</div><div><div class="t">Rated for ${ageShort}</div><div class="sub">${esc(a.contentAdvisory||'Shares Location')}</div></div></div>
           <a href="#">Learn more</a>
@@ -330,7 +373,7 @@ function viewPlay(a,L){
           <div class="t" style="font-size:15px">Package</div>
           <div class="sub"><code>${a.androidPackage}</code></div>
           <div class="t" style="font-size:15px;margin-top:12px">Short description</div>
-          <div class="sub">${esc(L.googleplay.shortDescription)}</div>
+          <div class="sub"${ea(`locales.${locale}.googleplay.shortDescription`,'Short description')}>${esc(L.googleplay.shortDescription)}</div>
         </div>
       </div>
     </div>
@@ -369,10 +412,24 @@ function render(){
   ls.querySelectorAll('button').forEach(b=>b.onclick=()=>{locale=b.dataset.loc;render();});
   document.getElementById('storeSeg').className='seg store'+(store==='googleplay'?' play':'');
   document.getElementById('asoToggle').classList.toggle('on',showAso);
+  document.getElementById('inlineBtn').classList.toggle('on',inlineEdit);
+  document.body.classList.toggle('inline', inlineEdit);
 
   const root=document.getElementById('app');
   root.innerHTML=(store==='appstore'?viewAppStore(a,L):viewPlay(a,L))+asoPanel(a,L);
   root.querySelectorAll('.subtabs button').forEach(b=>b.onclick=()=>{shotTab=b.dataset.tab;render();});
+  // inline UI editing: write text edits straight back into DATA (no re-render → keeps caret)
+  root.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('input',()=>{
+    setPath(DATA, el.dataset.edit, el.innerText.replace(/ /g,' ')); updateAso();
+  }));
+  // image edit/replace/remove/add + icon + feature graphic
+  root.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>imgAction(el.dataset));
+}
+function updateAso(){
+  if(!showAso) return;
+  const node=document.querySelector('.aso'); if(!node) return;
+  const tmp=document.createElement('div'); tmp.innerHTML=asoPanel(DATA.app, DATA.locales[locale]);
+  if(tmp.firstElementChild) node.replaceWith(tmp.firstElementChild);
 }
 
 document.querySelectorAll('#storeSeg button').forEach(b=>b.onclick=()=>{
@@ -635,6 +692,58 @@ function setChecklist(on){
   }
 }
 $('checklistBtn').onclick=()=>setChecklist(!showChecklist);
+
+/* ---------------- Inline UI edit + image replace + export ---------------- */
+let pickTarget=null;
+function imgAction(d){
+  const act=d.act;
+  if(act==='del'){ DATA.screenshots[d.cat].splice(+d.i,1); render(); return; }
+  if(act==='rep')      pickTarget={kind:'shot',cat:d.cat,idx:+d.i,multi:false};
+  else if(act==='add') pickTarget={kind:'shot',cat:d.cat,idx:-1,multi:true};
+  else if(act==='icon')pickTarget={kind:'icon',multi:false};
+  else if(act==='gfx') pickTarget={kind:'gfx',gfx:d.gfx,multi:false};
+  else return;
+  $('imgPick').multiple=!!pickTarget.multi;
+  $('imgPick').click();
+}
+$('imgPick').onchange=async e=>{
+  const files=[...e.target.files]; e.target.value=''; if(!files.length||!pickTarget) return;
+  const metas=await Promise.all(files.map(readImage));
+  const t=pickTarget; pickTarget=null;
+  const dim=m=>(m.w&&m.h)?`${m.w}×${m.h}`:'';
+  if(t.kind==='shot'){
+    const shots=metas.map(m=>({file:m.url,label:m.name.replace(/\.[^.]+$/,''),size:dim(m)}));
+    DATA.screenshots=DATA.screenshots||{}; DATA.screenshots[t.cat]=DATA.screenshots[t.cat]||[];
+    if(t.idx>=0) DATA.screenshots[t.cat].splice(t.idx,1,shots[0]);
+    else DATA.screenshots[t.cat].push(...shots);
+  } else if(t.kind==='icon'){
+    DATA.app.icon=metas[0].url; DATA.graphics=DATA.graphics||{};
+    DATA.graphics.appIcon={status:'uploaded',file:metas[0].url,size:dim(metas[0]),spec:'App icon'};
+  } else if(t.kind==='gfx'){
+    const m=metas[0]; DATA.graphics=DATA.graphics||{};
+    DATA.graphics[t.gfx]={status:'uploaded',file:m.url,size:dim(m),spec:t.gfx==='appIcon'?'App icon':'Feature graphic'};
+    if(t.gfx==='appIcon') DATA.app.icon=m.url;
+  }
+  render();
+  if(typeof toast==='function') toast('Image updated');
+};
+
+$('inlineBtn').onclick=()=>{
+  inlineEdit=!inlineEdit;
+  if(inlineEdit){ if(showChecklist) setChecklist(false); if(mode!=='preview') setMode('preview'); }
+  render();
+  if(inlineEdit&&typeof toast==='function') toast('Edit on page: click any text to edit · click an image to replace');
+};
+
+$('exportBtn').onclick=()=>{
+  const txt=JSON.stringify(DATA,null,2);
+  const blob=new Blob([txt],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='listing.json'; a.click();
+  URL.revokeObjectURL(a.href);
+  if(typeof toast==='function')
+    toast('Exported listing.json'+(/blob:/.test(txt)?' — note: dropped/replaced images are session-only blob URLs':''));
+};
 
 fetch('listing.json').then(r=>r.json()).then(d=>{DATA=d;SAVED=JSON.parse(JSON.stringify(d));render();}).catch(e=>{
   document.getElementById('app').innerHTML=`<div class="err"><p>Could not load <code>listing.json</code> (browsers block <code>file://</code> fetch).</p>

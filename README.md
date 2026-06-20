@@ -15,8 +15,15 @@ and graphics before you submit.
 - **Localized** — switch locales; per-locale copy from one JSON file.
 - **ASO checks** — live character-count limits per store field (name, subtitle,
   keywords, descriptions, changelog…).
-- **Edit JSON** — edit the listing inline and hit *Apply & preview*; download the
-  result as `listing.json`.
+- **✏️ Edit on page** — toggle *Edit on page* and click **any text directly in the
+  mockup** to edit it (name, subtitle, description, keywords, what's new, title,
+  short description, developer, rating…). Edits write straight back into the data
+  and the ASO counters update live. In this mode each screenshot gets
+  **replace / remove** controls and a **＋ add** tile, and the app icon / feature
+  graphic are click-to-replace.
+- **Edit JSON** — edit the raw listing JSON and hit *Apply & preview*.
+- **⬇️ Export data** — download the current listing (including your inline edits)
+  as `listing.json` at any time.
 - **Load JSON…** — open any `listing.json` to preview your own app.
 - **🖼️ Drag & drop images** — drop image files **or a whole folder** anywhere on
   the page (or use *Load images…*). They're auto-sorted into iPhone / iPad /
