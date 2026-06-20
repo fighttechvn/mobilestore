@@ -155,6 +155,27 @@
     padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.28);
     opacity:0;transition:opacity .25s,transform .25s;pointer-events:none;max-width:80vw}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+
+  /* ============ release checklist ============ */
+  .checklist{max-width:920px;margin:0 auto;padding:18px 18px 90px}
+  .cl-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+  .cl-head h2{margin:0;font-size:20px;font-weight:800}
+  .cl-bar{flex:1;height:9px;background:#ececf0;border-radius:6px;overflow:hidden}
+  .cl-bar>div{height:100%;width:0;background:linear-gradient(90deg,var(--brand1),var(--brand2));transition:width .25s}
+  .cl-pct{font-size:13px;font-weight:700;color:var(--muted);min-width:40px;text-align:right;font-variant-numeric:tabular-nums}
+  .cl-grp{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:14px;box-shadow:0 6px 24px rgba(0,0,0,.04)}
+  .cl-grp>h3{margin:0 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  .cl-grp ul{list-style:none;margin:0;padding:0}
+  .cl-grp li{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line)}
+  .cl-grp li:first-of-type{border-top:0}
+  .cl-grp li input{margin-top:3px;width:16px;height:16px;accent-color:var(--brand2);cursor:pointer;flex:none}
+  .cl-grp li label{cursor:pointer;font-size:14px;line-height:1.5}
+  .cl-grp li.done label{color:var(--muted);text-decoration:line-through}
+  .cl-tag{font-size:10px;font-weight:800;padding:1px 7px;border-radius:6px;margin-right:7px;vertical-align:middle;white-space:nowrap}
+  .cl-tag.web{background:#fdebd0;color:#9c6510}
+  .cl-tag.dec{background:#fde2e2;color:#b3261e}
+  .cl-tag.api{background:#d6f0e2;color:#0f6b3e}
+  .cl-note{font-size:12.5px;color:var(--muted);margin:-4px 0 16px}
 </style>
 </head>
 <body>
@@ -167,6 +188,7 @@
   </div>
   <div class="seg" id="localeSeg"></div>
   <button class="toggle" id="asoToggle">ASO checks</button>
+  <button class="toggle" id="checklistBtn">Release checklist</button>
   <button class="toggle" id="editToggle">Edit JSON</button>
   <button class="toggle" id="loadBtn">Load JSON…</button>
   <button class="toggle" id="loadImgBtn">Load images…</button>
@@ -187,6 +209,7 @@
   </div>
   <textarea id="jsonText" spellcheck="false" placeholder="Load or paste listing.json here…"></textarea>
 </div>
+<div class="checklist hidden" id="checklist"></div>
 <div class="drop-overlay" id="dropOverlay"><div class="box"><div class="big">🖼️</div>Drop images or a folder
   <small>Auto-sorted by name &amp; aspect ratio into iPhone · iPad · phone · tablet · app icon · feature graphic</small></div></div>
 <div class="toast" id="toast"></div>
@@ -504,6 +527,114 @@ document.addEventListener('drop',e=>{
     filesFromDrop(e.dataTransfer).then(loadImageFiles);
   }
 });
+
+/* ---------------- Release checklist ---------------- */
+const CHECKLIST=[
+  ['Accounts & signing',[
+    ['Apple Developer Program active; team id noted'],
+    ['Google Play Developer account active'],
+    ['App Store Connect API key created; .p8 saved to ~/.appstoreconnect/private_keys/','api'],
+    ['Google Play service-account JSON (role: Release manager) in .env.prod','api'],
+    ['iOS distribution cert + App Store provisioning profile (or Xcode automatic)'],
+    ['Android keystore available; Play App Signing enabled'],
+    ['All secrets gitignored — nothing committed to the app repo'],
+  ]],
+  ['App records (one-time)',[
+    ['App Store Connect app record created (API key cannot — 403)','web'],
+    ['Play Console app created','web'],
+    ['Bundle id / applicationId final (permanent once published)'],
+  ]],
+  ['Listing content',[
+    ['iOS metadata per locale in ios/fastlane/metadata/<locale>/','api'],
+    ['Android metadata per locale in android/fastlane/metadata/android/<locale>/','api'],
+    ['iOS screenshots: iPhone 6.9"/6.7" (APP_IPHONE_67) + iPad 12.9" (APP_IPAD_PRO_3GEN_129)'],
+    ['Android graphics: icon, feature graphic, phone + 7"/10" tablet shots'],
+    ['Copy within each store’s character limits (use ASO checks)'],
+    ['Re-verify screenshots aren’t flagged “missing” (assets can show a count yet fail to finalize)'],
+  ]],
+  ['Build',[
+    ['version: bumped in pubspec.yaml'],
+    ['iOS binary built + uploaded (no-codesign archive → exportArchive → altool)','api'],
+    ['iOS build reaches state VALID (processing 5–30 min — poll before attaching)'],
+    ['iOS build attached to the version; version string == CFBundleShortVersionString','api'],
+    ['Android AAB uploaded to a track (fastlane internal)','api'],
+  ]],
+  ['App Store version requirements (the “Submit” blockers)',[
+    ['Copyright set on the version','api'],
+    ['Content Rights declaration set','api','dec'],
+    ['Age Rating questionnaire — all descriptors None → 4+ (needs ageAssurance too)','api','dec'],
+    ['App Privacy data-collection answers published','web','dec'],
+    ['Pricing set (e.g. Free)','web'],
+    ['Export compliance answered (ITSAppUsesNonExemptEncryption in Info.plist)'],
+  ]],
+  ['Submit',[
+    ['iOS: create review submission → add version → submit_for_review','api'],
+    ['iOS: version state moves to WAITING_FOR_REVIEW'],
+    ['Android: every Play Dashboard task green (data safety, content rating, audience, privacy)','web'],
+    ['Android: promote tested internal build to production','api'],
+  ]],
+  ['Known first-submission rejections',[
+    ['90771 — UIBackgroundModes without a matching capability → remove unused mode'],
+    ['ITMS-90683 — missing usage string (e.g. NSPhotoLibraryUsageDescription) → add it'],
+    ['“No data” at fetch_app_store_review_detail → create review detail via spaceship'],
+    ['invalid byte sequence in US-ASCII → export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8'],
+    ['fastlane/gh_inspector missing → use Homebrew ruby + bundle exec'],
+  ]],
+];
+const CL_KEY='store-release-checklist-v1';
+const TAGLBL={web:'WEB UI',dec:'DECLARATION',api:'API'};
+let showChecklist=false;
+function clState(){ try{return JSON.parse(localStorage.getItem(CL_KEY)||'{}');}catch(_){return {};} }
+function clSave(s){ try{localStorage.setItem(CL_KEY,JSON.stringify(s));}catch(_){}}
+function renderChecklist(){
+  const saved=clState(); let total=0, done=0;
+  const groups=CHECKLIST.map((g,gi)=>{
+    const items=g[1].map((it,ii)=>{
+      const id='c'+gi+'_'+ii; total++; const on=!!saved[id]; if(on)done++;
+      const tags=it.slice(1).map(t=>`<span class="cl-tag ${t}">${TAGLBL[t]}</span>`).join('');
+      return `<li class="${on?'done':''}"><input type="checkbox" id="${id}" ${on?'checked':''}>
+        <label for="${id}">${tags}${esc(it[0])}</label></li>`;
+    }).join('');
+    return `<div class="cl-grp"><h3>${esc(g[0])}</h3><ul>${items}</ul></div>`;
+  }).join('');
+  const pct=total?Math.round(done/total*100):0;
+  document.getElementById('checklist').innerHTML=`
+    <div class="cl-head"><h2>Release checklist</h2>
+      <div class="cl-bar"><div style="width:${pct}%"></div></div><span class="cl-pct">${pct}%</span>
+      <button class="btn" id="clReset">Reset</button></div>
+    <div class="cl-note">First App Store + Google Play submission. <span class="cl-tag api">API</span> = scriptable ·
+      <span class="cl-tag web">WEB UI</span> = console only · <span class="cl-tag dec">DECLARATION</span> = don’t fabricate, ask the owner. Progress saved in this browser.</div>
+    ${groups}`;
+  const cl=document.getElementById('checklist');
+  cl.querySelectorAll('input[type=checkbox]').forEach(b=>b.onchange=()=>{
+    const s=clState(); s[b.id]=b.checked; clSave(s);
+    b.closest('li').classList.toggle('done',b.checked);
+    clProgress();           // update in place — don't rebuild (keeps scroll position)
+  });
+  document.getElementById('clReset').onclick=()=>{ clSave({}); renderChecklist(); };
+}
+function clProgress(){
+  const cl=document.getElementById('checklist');
+  const boxes=cl.querySelectorAll('input[type=checkbox]');
+  const done=[...boxes].filter(b=>b.checked).length;
+  const pct=boxes.length?Math.round(done/boxes.length*100):0;
+  cl.querySelector('.cl-bar>div').style.width=pct+'%';
+  cl.querySelector('.cl-pct').textContent=pct+'%';
+}
+function setChecklist(on){
+  showChecklist=on;
+  document.getElementById('checklist').classList.toggle('hidden',!on);
+  document.getElementById('checklistBtn').classList.toggle('on',on);
+  if(on){
+    $('app').classList.add('hidden'); $('editor').classList.add('hidden');
+    ['storeSeg','localeSeg','asoToggle','editToggle'].forEach(id=>$(id).style.display='none');
+    renderChecklist();
+  }else{
+    ['storeSeg','localeSeg','asoToggle','editToggle'].forEach(id=>$(id).style.display='');
+    setMode(mode==='edit'?'edit':'preview');
+  }
+}
+$('checklistBtn').onclick=()=>setChecklist(!showChecklist);
 
 fetch('listing.json').then(r=>r.json()).then(d=>{DATA=d;SAVED=JSON.parse(JSON.stringify(d));render();}).catch(e=>{
   document.getElementById('app').innerHTML=`<div class="err"><p>Could not load <code>listing.json</code> (browsers block <code>file://</code> fetch).</p>
